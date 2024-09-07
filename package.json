@@ -10,6 +10,8 @@
   },
   "dependencies": {
     "dotenv": "^16.4.5",
+    "firebase": "^10.13.1",
+    "firebase-admin": "^12.4.0",
     "grammy": "^1.30.0",
     "node-cron": "^3.0.3",
     "ts-node": "^10.9.2"
