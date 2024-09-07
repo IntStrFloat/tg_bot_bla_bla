@@ -59,12 +59,12 @@ async function removeUserFromFirebase(
 
 async function getUsersFromFirebase(
   collectionRef: CollectionReference
-): Promise<Set<Username>> {
-  const users = new Set<Username>();
+): Promise<Array<Username>> {
+  const users = new Array<Username>();
   try {
     const querySnapshot = await getDocs(collectionRef);
     querySnapshot.forEach((docSnapshot) => {
-      users.add(docSnapshot.data().username);
+      users.push(docSnapshot.data().username);
     });
   } catch (error) {
     console.error("Ошибка при получении пользователей из Firebase:", error);
@@ -101,7 +101,7 @@ bot.command("start", async (ctx) => {
   const allowedUsers = await getUsersFromFirebase(allowedUsersCollection);
   const admins = await getUsersFromFirebase(adminsCollection);
 
-  if (allowedUsers.has(username)) {
+  if (allowedUsers.includes(username)) {
     const keyboard = new InlineKeyboard()
       .text("Ревьюер", "reviewer")
       .text("Не ревьюер", "not_reviewer");
@@ -109,7 +109,7 @@ bot.command("start", async (ctx) => {
     ctx.reply("Привет! Выберите вашу роль на эту неделю:", {
       reply_markup: keyboard,
     });
-  } else if (admins.has(username)) {
+  } else if (admins.includes(username)) {
     ctx.reply(
       "Привет, Админ! Используйте команды /adduser <username> и /removeuser <username> для управления пользователями."
     );
@@ -123,7 +123,7 @@ bot.command("adduser", async (ctx) => {
   if (!username) return;
 
   const admins = await getUsersFromFirebase(adminsCollection);
-  if (!admins.has(username)) {
+  if (!admins.includes(username)) {
     return ctx.reply("У вас нет прав для выполнения этой команды.");
   }
 
@@ -143,7 +143,7 @@ bot.command("removeuser", async (ctx) => {
   if (!username) return;
 
   const admins = await getUsersFromFirebase(adminsCollection);
-  if (!admins.has(username)) {
+  if (!admins.includes(username)) {
     return ctx.reply("У вас нет прав для выполнения этой команды.");
   }
 
@@ -161,10 +161,14 @@ bot.command("removeuser", async (ctx) => {
 bot.callbackQuery("reviewer", async (ctx) => {
   const username = ctx.from?.username;
   if (username) {
-    await addUserToFirebase(reviewers, ctx.from.id);
-    ctx
-      .answerCallbackQuery("Вы записаны как ревьюер на эту неделю.")
-      .catch((err) => console.error("Ошибка при ответе на callback:", err));
+    const review_users = await getUsersFromFirebase(reviewers);
+    console.log(review_users);
+    if (!review_users.includes(ctx.from.id)) {
+      await addUserToFirebase(reviewers, ctx.from.id);
+      ctx
+        .answerCallbackQuery("Вы записаны как ревьюер на эту неделю.")
+        .catch((err) => console.error("Ошибка при ответе на callback:", err));
+    }
   }
 });
 
@@ -182,7 +186,11 @@ bot.on("message", async (ctx) => {
   const username = ctx.from?.username;
   const review_users = await getUsersFromFirebase(reviewers);
   const allowed_users = await getUsersFromFirebase(allowedUsersCollection);
-  if (username && !review_users.has(username) && allowed_users.has(username)) {
+  if (
+    username &&
+    !review_users.includes(username) &&
+    allowed_users.includes(username)
+  ) {
     review_users.forEach((reviewerUsername) => {
       if (reviewerUsername !== ctx.from.id) {
         bot.api
