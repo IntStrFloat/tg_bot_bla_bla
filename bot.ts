@@ -7,13 +7,18 @@ import {
   addDoc,
   getDocs,
   deleteDoc,
-  doc,
   CollectionReference,
+  doc,
 } from "firebase/firestore";
 
 dotenv.config();
 
-type Username = string | number;
+cron.schedule("01 9,13,16 * * *", sendWeeklyReminder);
+cron.schedule("* * * * * ", updateWeeklyReviewers); // Понедельник, 9:00
+type User = {
+  userName: string;
+  chatId: number;
+};
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 
@@ -29,13 +34,43 @@ const allowedUsersCollection: CollectionReference = collection(
 );
 const adminsCollection: CollectionReference = collection(db, "admins");
 const reviewers: CollectionReference = collection(db, "reviewers");
+const currentTabIndex: CollectionReference = collection(db, "reviewIndex");
+
+const reviewersSchedule = [
+  ["fac_ele_ss", "g_grm", "Crewch"],
+  ["g_grm", "Crewch", "valdislav_1"],
+  ["Crewch", "valdislav_1", "strrrrr1"],
+  ["valdislav_1", "strrrrr1", "fac_ele_ss"],
+  ["strrrrr1", "fac_ele_ss", "g_grm"],
+];
+
+let currentWeekIndex: number;
+
+async function updateWeeklyReviewers() {
+  let tabs = new Array<number>();
+  const snapshot = await getDocs(currentTabIndex);
+  snapshot.forEach((elem) => tabs.push(elem.data().tab as number));
+
+  currentWeekIndex = tabs[0];
+  const currentReviewers = reviewersSchedule[currentWeekIndex];
+
+  console.log("Текущие проверяющие:", currentReviewers);
+
+  currentWeekIndex = (currentWeekIndex + 1) % reviewersSchedule.length;
+
+  snapshot.forEach(async (docSnapshot) => {
+    await deleteDoc(doc(db, currentTabIndex.id, docSnapshot.id));
+  });
+
+  await addDoc(currentTabIndex, { tab: currentWeekIndex });
+}
 
 async function addUserToFirebase(
   collectionRef: CollectionReference,
-  username: Username
+  user: User
 ): Promise<void> {
   try {
-    await addDoc(collectionRef, { username });
+    await addDoc(collectionRef, user);
   } catch (error) {
     console.error("Ошибка при добавлении пользователя в Firebase:", error);
   }
@@ -43,12 +78,12 @@ async function addUserToFirebase(
 
 async function removeUserFromFirebase(
   collectionRef: CollectionReference,
-  username: Username
+  user: User
 ): Promise<void> {
   try {
     const querySnapshot = await getDocs(collectionRef);
     querySnapshot.forEach(async (docSnapshot) => {
-      if (docSnapshot.data().username === username) {
+      if (docSnapshot.data().chatId === user.chatId) {
         await deleteDoc(doc(db, collectionRef.id, docSnapshot.id));
       }
     });
@@ -59,12 +94,12 @@ async function removeUserFromFirebase(
 
 async function getUsersFromFirebase(
   collectionRef: CollectionReference
-): Promise<Array<Username>> {
-  const users = new Array<Username>();
+): Promise<Array<User>> {
+  const users = new Array<User>();
   try {
     const querySnapshot = await getDocs(collectionRef);
     querySnapshot.forEach((docSnapshot) => {
-      users.push(docSnapshot.data().username);
+      users.push(docSnapshot.data() as User);
     });
   } catch (error) {
     console.error("Ошибка при получении пользователей из Firebase:", error);
@@ -74,34 +109,47 @@ async function getUsersFromFirebase(
 
 async function sendWeeklyReminder(): Promise<void> {
   const allowedUsers = await getUsersFromFirebase(allowedUsersCollection);
-  const keyboard = new InlineKeyboard()
-    .text("Ревьюер", "reviewer")
-    .text("Не ревьюер", "not_reviewer");
 
   allowedUsers.forEach((username) => {
-    bot.api
-      .sendMessage(username, "Выберите вашу роль на эту неделю:", {
-        reply_markup: keyboard,
-      })
-      .catch((err) =>
-        console.error(
-          `Не удалось отправить сообщение пользователю ${username}:`,
-          err
+    if (reviewersSchedule[currentWeekIndex].includes(username.userName)) {
+      bot.api
+        .sendMessage(
+          username.chatId,
+          `Привет, @${username.userName} - посмотри пр-ы :)`
         )
-      );
+        .catch((err) =>
+          console.error(
+            `Не удалось отправить сообщение пользователю ${username.userName}:`,
+            err
+          )
+        );
+    }
   });
 }
-
-cron.schedule("0 9 * * 1", sendWeeklyReminder);
 
 bot.command("start", async (ctx) => {
   const username = ctx.from?.username;
   if (!username) return;
-
+  console.log(ctx.from?.id);
   const allowedUsers = await getUsersFromFirebase(allowedUsersCollection);
+  console.log(allowedUsers);
+  const userNames = allowedUsers?.map((el) => el.userName);
   const admins = await getUsersFromFirebase(adminsCollection);
+  console.log(admins);
+  if (userNames.includes(username)) {
+    const realy_user = {
+      userName: username,
+      chatId: ctx.from?.id!,
+    };
+    const isInvalidUser = allowedUsers.find((el) => el.chatId == 0);
+    if (isInvalidUser) {
+      await removeUserFromFirebase(allowedUsersCollection, {
+        userName: username,
+        chatId: 0,
+      });
+      await addUserToFirebase(allowedUsersCollection, realy_user);
+    }
 
-  if (allowedUsers.includes(username)) {
     const keyboard = new InlineKeyboard()
       .text("Ревьюер", "reviewer")
       .text("Не ревьюер", "not_reviewer");
@@ -109,7 +157,7 @@ bot.command("start", async (ctx) => {
     ctx.reply("Привет! Выберите вашу роль на эту неделю:", {
       reply_markup: keyboard,
     });
-  } else if (admins.includes(username)) {
+  } else if (admins.map((el) => el.userName).includes(username)) {
     ctx.reply(
       "Привет, Админ! Используйте команды /adduser <username> и /removeuser <username> для управления пользователями."
     );
@@ -122,12 +170,18 @@ bot.command("adduser", async (ctx) => {
   const username = ctx.from?.username;
   if (!username) return;
 
-  const admins = await getUsersFromFirebase(adminsCollection);
+  const admins = (await getUsersFromFirebase(adminsCollection)).map(
+    (admin) => admin.userName
+  );
   if (!admins.includes(username)) {
     return ctx.reply("У вас нет прав для выполнения этой команды.");
   }
+  console.log(123123123);
+  const newUser: User = {
+    userName: ctx.message?.text?.split(" ")[1]!,
+    chatId: 0,
+  };
 
-  const newUser = ctx.message?.text?.split(" ")[1];
   if (!newUser) {
     return ctx.reply(
       "Пожалуйста, укажите username пользователя для добавления. Пример: /adduser username"
@@ -142,12 +196,18 @@ bot.command("removeuser", async (ctx) => {
   const username = ctx.from?.username;
   if (!username) return;
 
-  const admins = await getUsersFromFirebase(adminsCollection);
+  const admins = (await getUsersFromFirebase(adminsCollection)).map(
+    (admin) => admin.userName
+  );
   if (!admins.includes(username)) {
     return ctx.reply("У вас нет прав для выполнения этой команды.");
   }
 
-  const removeUser = ctx.message?.text?.split(" ")[1];
+  const removeUser = {
+    userName: ctx.message?.text?.split(" ")[1]!,
+    chatId: ctx.from?.id!,
+  };
+
   if (!removeUser) {
     return ctx.reply(
       "Пожалуйста, укажите username пользователя для удаления. Пример: /removeuser username"
@@ -161,10 +221,15 @@ bot.command("removeuser", async (ctx) => {
 bot.callbackQuery("reviewer", async (ctx) => {
   const username = ctx.from?.username;
   if (username) {
-    const review_users = await getUsersFromFirebase(reviewers);
+    const review_users = (await getUsersFromFirebase(reviewers)).map(
+      (reviewers) => reviewers.chatId
+    );
     console.log(review_users);
     if (!review_users.includes(ctx.from.id)) {
-      await addUserToFirebase(reviewers, ctx.from.id);
+      await addUserToFirebase(reviewers, {
+        userName: ctx.from.username!,
+        chatId: ctx.from.id!,
+      });
       ctx
         .answerCallbackQuery("Вы записаны как ревьюер на эту неделю.")
         .catch((err) => console.error("Ошибка при ответе на callback:", err));
@@ -175,7 +240,10 @@ bot.callbackQuery("reviewer", async (ctx) => {
 bot.callbackQuery("not_reviewer", async (ctx) => {
   const username = ctx.from?.username;
   if (username) {
-    await removeUserFromFirebase(reviewers, ctx.from.id);
+    await removeUserFromFirebase(reviewers, {
+      userName: username!,
+      chatId: ctx.from.id,
+    });
     ctx
       .answerCallbackQuery("Вы записаны как не ревьюер на эту неделю.")
       .catch((err) => console.error("Ошибка при ответе на callback:", err));
@@ -185,17 +253,20 @@ bot.callbackQuery("not_reviewer", async (ctx) => {
 bot.on("message", async (ctx) => {
   const username = ctx.from?.username;
   const review_users = await getUsersFromFirebase(reviewers);
-  const allowed_users = await getUsersFromFirebase(allowedUsersCollection);
+  const allowed_users = (
+    await getUsersFromFirebase(allowedUsersCollection)
+  ).map((user) => user.userName);
+
   if (
     username &&
-    !review_users.includes(username) &&
+    !review_users.map((elem) => elem.userName).includes(username) &&
     allowed_users.includes(username)
   ) {
     review_users.forEach((reviewerUsername) => {
-      if (reviewerUsername !== ctx.from.id) {
+      if (reviewerUsername.chatId !== ctx.from.id) {
         bot.api
           .sendMessage(
-            reviewerUsername,
+            reviewerUsername.chatId,
             `Сообщение от @${username}: ${ctx.message.text}`
           )
           .catch((err) =>
