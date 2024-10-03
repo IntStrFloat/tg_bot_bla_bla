@@ -14,7 +14,7 @@ import {
 dotenv.config();
 
 cron.schedule("01 9,13,16 * * *", sendWeeklyReminder);
-cron.schedule("* * * * * ", updateWeeklyReviewers); // Понедельник, 9:00
+cron.schedule("* * * * 5", updateWeeklyReviewers); // Понедельник, 9:00
 type User = {
   userName: string;
   chatId: number;
@@ -44,13 +44,11 @@ const reviewersSchedule = [
   ["strrrrr1", "fac_ele_ss", "g_grm"],
 ];
 
-let currentWeekIndex: number;
-
 async function updateWeeklyReviewers() {
   let tabs = new Array<number>();
+  let currentWeekIndex: number;
   const snapshot = await getDocs(currentTabIndex);
   snapshot.forEach((elem) => tabs.push(elem.data().tab as number));
-
   currentWeekIndex = tabs[0];
   const currentReviewers = reviewersSchedule[currentWeekIndex];
 
@@ -109,7 +107,11 @@ async function getUsersFromFirebase(
 
 async function sendWeeklyReminder(): Promise<void> {
   const allowedUsers = await getUsersFromFirebase(allowedUsersCollection);
-
+  let tabs = new Array<number>();
+  let currentWeekIndex: number;
+  const snapshot = await getDocs(currentTabIndex);
+  snapshot.forEach((elem) => tabs.push(elem.data().tab as number));
+  currentWeekIndex = tabs[0];
   allowedUsers.forEach((username) => {
     if (reviewersSchedule[currentWeekIndex].includes(username.userName)) {
       bot.api
@@ -128,9 +130,15 @@ async function sendWeeklyReminder(): Promise<void> {
 }
 
 bot.command("start", async (ctx) => {
+  let tabs = new Array<number>();
+  let currentWeekIndex: number;
+  const snapshot = await getDocs(currentTabIndex);
+  snapshot.forEach((elem) => tabs.push(elem.data().tab as number));
+  currentWeekIndex = tabs[0];
   const username = ctx.from?.username;
   if (!username) return;
   console.log(ctx.from?.id);
+  console.log(username);
   const allowedUsers = await getUsersFromFirebase(allowedUsersCollection);
   console.log(allowedUsers);
   const userNames = allowedUsers?.map((el) => el.userName);
@@ -141,23 +149,21 @@ bot.command("start", async (ctx) => {
       userName: username,
       chatId: ctx.from?.id!,
     };
-    const isInvalidUser = allowedUsers.find((el) => el.chatId == 0);
-    if (isInvalidUser) {
-      await removeUserFromFirebase(allowedUsersCollection, {
-        userName: username,
-        chatId: 0,
-      });
+    const isValidUser = !!allowedUsers.find(
+      (el) =>
+        el.chatId === 0 && el.userName == username.slice(1, username.length)
+    );
+    if (!isValidUser) {
       await addUserToFirebase(allowedUsersCollection, realy_user);
     }
 
-    const keyboard = new InlineKeyboard()
-      .text("Ревьюер", "reviewer")
-      .text("Не ревьюер", "not_reviewer");
-
-    ctx.reply("Привет! Выберите вашу роль на эту неделю:", {
-      reply_markup: keyboard,
-    });
+    ctx.reply(
+      `Привет! Вот список проверяющих на эту неделю ${reviewersSchedule[currentWeekIndex]}`
+    );
   } else if (admins.map((el) => el.userName).includes(username)) {
+    console.log(
+      `Привет! Вот список проверяющих на эту неделю ${reviewersSchedule[currentWeekIndex]}`
+    );
     ctx.reply(
       "Привет, Админ! Используйте команды /adduser <username> и /removeuser <username> для управления пользователями."
     );
@@ -250,35 +256,35 @@ bot.callbackQuery("not_reviewer", async (ctx) => {
   }
 });
 
-bot.on("message", async (ctx) => {
-  const username = ctx.from?.username;
-  const review_users = await getUsersFromFirebase(reviewers);
-  const allowed_users = (
-    await getUsersFromFirebase(allowedUsersCollection)
-  ).map((user) => user.userName);
+// bot.on("message", async (ctx) => {
+//   const username = ctx.from?.username;
+//   const review_users = await getUsersFromFirebase(reviewers);
+//   const allowed_users = (
+//     await getUsersFromFirebase(allowedUsersCollection)
+//   ).map((user) => user.userName);
 
-  if (
-    username &&
-    !review_users.map((elem) => elem.userName).includes(username) &&
-    allowed_users.includes(username)
-  ) {
-    review_users.forEach((reviewerUsername) => {
-      if (reviewerUsername.chatId !== ctx.from.id) {
-        bot.api
-          .sendMessage(
-            reviewerUsername.chatId,
-            `Сообщение от @${username}: ${ctx.message.text}`
-          )
-          .catch((err) =>
-            console.error(
-              `Ошибка при отправке сообщения ревьюеру ${reviewerUsername}:`,
-              err
-            )
-          );
-      }
-    });
-  }
-});
+//   if (
+//     username &&
+//     !review_users.map((elem) => elem.userName).includes(username) &&
+//     allowed_users.includes(username)
+//   ) {
+//     review_users.forEach((reviewerUsername) => {
+//       if (reviewerUsername.chatId !== ctx.from.id) {
+//         bot.api
+//           .sendMessage(
+//             reviewerUsername.chatId,
+//             `Сообщение от @${username}: ${ctx.message.text}`
+//           )
+//           .catch((err) =>
+//             console.error(
+//               `Ошибка при отправке сообщения ревьюеру ${reviewerUsername}:`,
+//               err
+//             )
+//           );
+//       }
+//     });
+//   }
+// });
 
 bot.catch((err) => {
   const ctx = err.ctx;
