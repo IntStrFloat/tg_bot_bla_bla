@@ -13,8 +13,8 @@ import {
 
 dotenv.config();
 
-cron.schedule("01 9,13,16 * * *", sendWeeklyReminder);
-cron.schedule("* * * * 5", updateWeeklyReviewers); // Понедельник, 9:00
+cron.schedule("01 6,10,13 * * 1-5", sendWeeklyReminder);
+cron.schedule("0 2 * * 1", updateWeeklyReviewers);
 type User = {
   userName: string;
   chatId: number;
